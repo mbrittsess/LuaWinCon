@@ -1,0 +1,273 @@
+{\rtf1\ansi\ansicpg1252\deff0\deflang1033{\fonttbl{\f0\fswiss\fprq2\fcharset0 Arial;}{\f1\fswiss\fcharset0 Arial;}}
+{\*\generator Msftedit 5.41.21.2509;}\viewkind4\uc1\pard\f0\fs20 Lua Win32 Console Library\par
+\par
+Terms:\par
+\tab Legal - Within the range of all possible values in all possible situations, without necessarily being a sensible value in this situation. If there is some situation where it *could* be a sensible value, then it is a legal value.\par
+\tab Valid - Within the range of meaningful values in *this* situation. For example, if a screenbuffer has a buffer size of (80,80), then a position 'coord' of (100,100) is legal but not valid. All valid values are also legal values.\par
+\tab Negative - All values from negative infinity up to, but not including, zero.\par
+\tab Positive - All values from, but not including, zero, up to positive infinity.\par
+\tab Nonnegative - All values from zero through infinity, inclusive.\par
+\tab Nonpositive - All values from negative infinity through zero, inclusive.\par
+\par
+\tab While this is called the Lua 'Win32' Console Library, this is not meant to imply that the library is only designed to be used with the Win32 Console. While it serves the precise needs, by and large, of a Win32 Console, the library has been defined such that it can be implemented for many different kinds of consoles, so long as they meet certain minimum requirements. Porting to preexisting consoles will indeed take a bit of effort, but most of the hairier issues are left to be implementation-defined. \par
+\par
+\tab This library has also been designed with certain philosophies in mind. Much of the output functionality is write-only; there is no way to get the current value of a specific cell, or the current position or size of a cursor. No functions take a position relative to a current position. As well, there are only three graphical-output functions, all of which take a considerable variety of arguments, and two of which take an almost unlimited number of them. The key point here is that the library is designed with the consideration that function calls are expensive, and so one should reduce them as much as possible, particularly by batching output calls and keeping track of state internally. \par
+\par
+\tab Unless otherwise noted, all functions will error if passed any arguments beyond the ones they are designed to handle, or if any required arguments are omitted.\par
+\tab Essentially, the functions will fail if passed legal but invalid values, but will error if passed illegal values.\par
+\par
+Strings\par
+\tab The exact encoding of streams is implementation-defined; however, it must be consistent throughout, and it is recommended that the encoding should be compatible with the encoding used by normal output functions in the Lua implementation being run. The basic implementation for the Win32 Console uses UTF-8 throughout.\par
+\tab It is also implementation-defined as to the exact relationship between cells and encoding. The basic Win32 Console implementation mirrors the behavior of the Windows Win32 Console and maps the equivalent UTF-16 \i code units \i0 (not code points!) to each cell (ergo: combining diacritics are not supported! code points in the Astral Planes are not supported!).\par
+\tab An implementation may choose to validate all input strings against their encoding; if so, this must be done in a consistent manner. Such an implementation may also choose to either error, or fail, if an invalid string is encountered. Implementations may also choose other behaviors as they see fit, such as precomposing or normalizing strings, or stripping BOMs, zero-width characters, nongraphic characters, etc. It is required that all such behavior be documented.\par
+\tab However, regardless of any kinds of validation or normalization performed, the contents of a string cannot affect the output formatting. Carriage returns cannot cause text to jump lines; non-breaking spaces cannot affect text wrapping; these two examples are not meant to be all-encompassing, but give a general idea of the forbidden behavior.\par
+\par
+Coords\par
+\tab A 'coord' is a particular kind of value used in many places here. A 'coord' is rather loosely-defined so that it can be integrated into any TUI toolkits designed to make use of this library. Specifically, any value for which Value[1] and Value[2] are integer numbers, or convertible to integer numbers as per the usual Lua rules, is considered to be a 'coord'. The LuaWinCon library respects metamethods in determining this. \par
+\tab coords used as position values are 1-based; that is, the top-left cell has coordinates (1,1). A legal position coord has only positive values.\par
+\tab coords used as size values use units of number-of-cells; so, a region 3 cells in width and 4 cells in height has a size of (3,4). A legal size coord has only nonnegative values.\par
+\par
+\tab There is no definition as to any metamethods or regular methods a coord has to have. However, it is encouraged that an implementation should associate a default metatable with all coords returned by it with useful operations defined, as well as provide a library function for creating such coords for the user from provided values.\par
+\par
+Attribs\par
+\tab An 'attrib' is a particular kind of value used in the functions and methods FillRegion(), WriteRegion(), and WriteRun(). An 'attrib' defines the attributes of a given cell, most commonly the color of the text and the color of the cell background. An 'attrib' determines such properties for a whole cell: different attribs cannot coexist within a cell, and a cell only ever has one 'attrib'.\par
+\tab What, precisely, an 'attrib' controls is implementation-defined, as is the exact form an 'attrib' value takes. However, the basic implementation for the Win32 console, defines an 'attrib' to be any value for which Value[1] and Value[2] are positive integers in the range 1..16, inclusive, representing ordinals indices into the screenbuffer's color table. Value[1] indicates the color of the text, and Value[2] indicates the color of the cell background.\par
+\tab An implementation may choose not to define the structure of an 'attrib', however, in this case, it is required that the implementation supply a number of predefined opaque values to use as attribs.\par
+\par
+Screenbuffers\par
+\tab Screenbuffers are the objects that one logically writes to. Whenever you see console graphics, you're looking at a screenbuffer. Each console can have multiple screenbuffers, but only one can be displayed at a time. Screenbuffers carry a lot of settings and data with them, most noticeably the actual character and attribute data shown. Other properties a screenbuffer carries with it are buffer size, window size and position (explained shortly), cursor size, position, and activation, and in the default Win32 implementation, a color table.\par
+\tab The data of a screenbuffer does not necessarily match 100% with what you see on-screen. Technically, what one sees is a \i window\i0  into the screenbuffer's data. The actual screenbuffer can be larger (but not smaller) than the window the user sees. The window works just as its namesake; it shows a certain portion at a time of the data, and can be used to scroll around a bunch of data too large to show at once. For most applications this is an inefficient way to implement "scrolling" as it effects the \i entire\i0  visible data, but could be appropriate to Roguelike games.\par
+\tab All operations upon screenbuffers are logically separate from any notion of which one is the "active" screenbuffer, so offscreen drawing to screenbuffers is entirely possible, and this is in fact highly recommended, as it forms the backbone of double-buffering, which provides a smoother-looking screen-update experience for the user.\par
+\par
+Consoles\par
+\tab A console corresponds one-to-one with a display construct of some sort. It could be an OS window (such as on Win32), an entire video display, one of several virtual in-game displays, etc. In fact, the LuaWinCon library specifications can more correctly be thought of as the interface to a single console. Different console devices will make available different tables to control the devices, but with identical sets of functions. \par
+\tab As well, consoles are the interface through which user-input is conducted (if supported). User input is not associated with any screenbuffer but rather, with the console device as a whole. A console does not have to support processing any kind of user input, particularly if the console device is solely an output-only type of affair in nature, but if it \i does\i0  support user-input, it is required to be available through the interface specified in this document.\par
+\tab Consoles do not carry nearly as much state with them as screenbuffers do. Besides the screenbuffers themselves, consoles also keep track of input records, the "default" screenbuffer, the console's 'title' (if applicable), and on Windows, a suitable "default" attrib.\par
+\par
+--LIBRARY FUNCTIONS\par
+\par
+LuaWinCon.NewConsole()\par
+\tab The exact effects of this function call are rather vaguely-defined, however, calling this function in any implementation should guarantee that a console is available and prepped for use, completely fresh, with a valid Default ScreenBuffer Handle available. \par
+\tab If a system does not support the creation of consoles in certain types of programs, then the library itself should detect when it is being loaded by such a program and intentionally fail to load at all.\par
+\tab Where applicable, implementations where a console can be shared with a parent process, should gain their own independent console. The effects of using any handles allocated before a call to this function are \b completely undefined.\b0  In many implementations, if STDIN, STDOUT, and STDERR are tied into the state of a console, the effects of using them may also be undefined.\par
+\tab The state of the console at this point is undefined as regards size, buffer contents, window position, etc. etc.\par
+\par
+\tab In the basic Win32 implementation, when the library is loaded, it will re-use a preexisting console the process is attached to when the library is loaded, and will create a new one if the process does not currently have a console. The main use of this function, then, would be to call it once at the beginning of a program to guarantee that the program has its own *independent* console to use. \par
+\tab In this case, the program should own up to the fact that its STDIN, STDOUT, and STDERR are likely no longer valid, and close them, or re-open them with something more appropriate. It must be noted that even if STDOUT is changed to something else, the print() function will still keep outputting to the original one.\par
+\par
+LuaWinCon.DefaultBuffer([buf])\par
+\tab When called with a screenbuffer, sets it as the default screenbuffer and returns a boolean indicating success or failure. When called without arguments, returns the default screenbuffer.\par
+\tab This function will error if passed a non-buffer.\par
+\par
+LuaWinCon.GetNewBuffer()\par
+\tab Returns a new screenbuffer object, or nil if one could not be created.\par
+\par
+LuaWinCon.SetTitle(string)\par
+\tab Sets the title of the console. Returns a boolean indicating success or failure.\par
+\tab Where possible, this sets the text of the titlebar of the graphical window the console is located in. If this is not applicable to an implementation, this function can simply do nothing (and should always fail), or it may choose to have some other behavior; this behavior must be documented, and cannot cause the state of the screenbuffer itself to change. \par
+\tab If a new console is created, the initial state of the console's title is undefined. It is recommended that an implementation set the title of each new console to some identical initial state.\par
+\par
+LuaWinCon.GetDefaultAttrib()\par
+\tab Returns an appropriate default 'attrib' to use in the writing functions. Data written with this default attrib should not look unusual or out-of-place. \par
+\par
+--INPUT FUNCTIONS\par
+\par
+LuaWinCon.ClearInput()\par
+\tab Clears the input buffer of the current console.\par
+\par
+LuaWinCon.IsInputAvailable()\par
+\tab Returns a boolean to indicate if any input is available to fetch, or nil if the function cannot properly execute for some reason. This function does not block.\par
+\tab On the basic Win32 Console implementation, this function will discard any input events up to the first KEY_EVENT or MOUSE_EVENT which are not of one of those types.\par
+\par
+LuaWinCon.FetchInput()\par
+\tab Returns an 'input record', blocking until one is available, if necessary, or returns nil if the function cannot properly execute for some reason. Specifically, this function actually first returns a string describing the *type* of input record, followed by the actual input record itself.\par
+\tab What constitutes an 'input record' is implementation-defined and must be fully-documented. \par
+\par
+\tab In the basic Win32 Console implementation, two types of input records are returned, named "key" and "mouse". Key records are returned whenever any keyboard key is pressed or released. Moust input records are returned whenever a mouse button is pressed or released, the mouse moves (cell-level resolution), or a mousewheel is moved.\par
+\par
+\tab Key input records take the form of a table, containing the following fields:\par
+\pard\li1080\i IsDown\i0  (boolean)\par
+\pard\li900\tab\b true\b0  inidicates that the key is pressed, otherwise it is \b false\b0 .\par
+\pard\li1080\i RepeatCount\i0  (positive number)\par
+\tab This indicates a key is being held down, and means that whatever action would normally be taken upon a keypress should happen multiple times. Normally, this field will be one. \par
+\tab A key-repeat triggered by a persistent holding-down of a key may be indicated by a higher number in RepeatCount, or simply by generation of multiple input records. There is no way to force one behavior or the other.\par
+\i KeyCode\i0  (nonnegative number)\par
+\tab This is the numeric virtual-key code, and is device-independent. It should correspond to a value defined in the VK_ enumerations of winuser.h.\par
+\i Key\i0  (string)\par
+\tab This is a string representation of the device-independent keycode given above. It is generated programmatically from the VK_ enumerations of winuser.h, by taking the slice of the enumeration name after the first underscore, and converting it to lowercase. Keycodes represented by ASCII character codes are given as their corresponding ASCII character (only uppercase used). Enumerations with duplicate numeric values in winuser.h will return the name used for the first definition.\par
+\i ScanCode\i0  (nonnegative number)\par
+\tab This is the virtual scan code of the key, as a representation of the device-dependent value generated by the actual keyboard hardware.\par
+\i Character\i0  (string)\par
+\tab If a reasonable character translation of the key can be made, it will be given here in UTF-8 form. \b If no reasonable translation can be made, this field will contain the empty string.\b0\par
+\i CapsLockIsOn\i0  (boolean)\par
+\i NumLockIsOn\i0  (boolean)\par
+\i ScrollLockIsOn\i0  (boolean)\par
+\tab These three indicate the given state of the various lock lights on the keyboard.\par
+\i ShiftIsDown\i0  (boolean)\par
+\i LeftAltIsDown\i0  (boolean)\i\par
+LeftCtrlIsDown\i0  (boolean)\i\par
+RightAltIsDown\i0  (boolean)\i\par
+AltGrIsDown\i0  (boolean)\i\par
+RightCtrlIsDown\i0  (boolean)\par
+\tab These six indicate the state of the given modifier keys. It should be noted that "RightAlt" and "AltGr" are merely aliases for the same key, and will always contain the same value.\par
+\i IsEnhancedKey\i0  (boolean)\par
+\tab The given key is an "enhanced" key, in the context of an IBM 101/102-key keyboard. This should apply only to the "Insert", "Delete", "Home", "End", "Page Up", and "Page Down" keys; the four arrow keys; and the "/" and "Enter" keys on the numpad.\par
+\par
+\pard\tab Mouse input records take the form of a table, containing the following fields:\par
+\pard\li1080\i Position\i0  (position coord)\par
+\tab Gives the position of the cell the mouse is over.\par
+\i Buttons\i0  (table of booleans)\par
+\tab A table, with the numeric keys 1..5, giving the state, in turn, of the leftmost, rightmost, and second, third, and fourth buttons from the leftmost. Most commonly, [1] is the "Left Mouse Button", [2] is the "Right Mouse Button", and [3] would be the "Middle Mouse Button".\par
+\tab As well, this table contains the string keys "left" and "right" as synonyms for [1] and [2]. \par
+\i Action\i0  (string)\par
+\tab The value of this field indicates what type of event caused the input record to be generated. It will be one of the following values:\par
+\b\tab "buttoned"\b0  indicates that a mouse button was pressed or released.\par
+\b\tab "doubleclicked"\b0  indicates that the second mousepress of a doubeclick occurred. The first press will be returned as a regular button-press event.\par
+\tab\b "moved"\b0  indicates that the mouse position changed (again, only at the cell level; movement within a cell is not reported.)\par
+\tab\b "wheeled"\b0  indicates that the vertical mouse wheel moved. This will cause the "Direction" field to appear in the input record, and it will contain the values \b "awayfrom"\b0  or \b "towards"\b0  indicating movement of the wheel relative to the user.\par
+\tab\b "hwheeled"\b0  indicates that the horizontal mouse wheel moved. This will cause the "Direction" field to appear in the input record, and it will contain the values \b "left"\b0  or \b "right"\b0  indicating movement of the wheel from the view of the user.\par
+\i Direction\i0  (string)\par
+\tab This field is only present if "Action" contains the values "wheeled" or "hwheeled". In the former case, this field will contain the values \b "awayfrom"\b0  or \b "towards"\b0 , and in the latter case, this field will contain the values \b "left"\b0  or \b "right"\b0 .\par
+\i CapsLockIsOn\i0  (boolean)\par
+\i NumLockIsOn\i0  (boolean)\par
+\i ScrollLockIsOn\i0  (boolean)\par
+\tab These three indicate the given state of the various lock lights on the keyboard.\par
+\i ShiftIsDown\i0  (boolean)\par
+\i LeftAltIsDown\i0  (boolean)\i\par
+LeftCtrlIsDown\i0  (boolean)\i\par
+RightAltIsDown\i0  (boolean)\i\par
+AltGrIsDown\i0  (boolean)\i\par
+RightCtrlIsDown\i0  (boolean)\par
+\tab These six indicate the state of the given modifier keys. It should be noted that "RightAlt" and "AltGr" are merely aliases for the same key, and will always contain the same value.\par
+\pard\par
+--INPUT FUNCTIONS END\par
+\par
+LuaWinCon.Close()\par
+\tab Equivalent to LuaWinCon.DefaultBuffer():Close().\par
+\par
+LuaWinCon.MakeActive()\par
+\tab Equivalent to LuaWinCon.DefaultBuffer():MakeActive().\par
+\par
+LuaWinCon.GetLargestWindowSize()\par
+\tab Equivalent to LuaWinCon.DefaultBuffer():GetLargestWindowSize().\par
+\par
+LuaWinCon.SetCursorVisible(boolean)\par
+\tab Equivalent to LuaWinCon.DefaultBuffer():SetCursorVisible(boolean).\par
+\par
+LuaWinCon.SetCursorPosition(coord)\par
+\tab Equivalent to LuaWinCon.DefaultBuffer():SetCursorPosition(coord).\par
+\par
+LuaWinCon.SetCursorSize(number)\par
+\tab Equivalent to LuaWinCon.DefaultBuffer():SetCursorSize(number).\par
+\par
+LuaWinCon.SetScreenBufferSize(coord)\par
+\tab Equivalent to LuaWinCon.DefaultBuffer():SetSize(coord).\par
+\par
+LuaWinCon.SetWindowPositionAndSize(position:coord, size:coord)\par
+\tab Equivalent to LuaWinCon.DefaultBuffer():SetWindowPositionAndSize(position, size).\par
+\par
+LuaWinCon.FillRegion(position:coord, size:coord, ...)\par
+\tab Equivalent to LuaWinCon.DefaultBuffer():FillRegion(position, size, ...).\par
+\par
+LuaWinCon.WriteRegion(position:coord, size:coord, ...)\par
+\tab Equivalent to LuaWinCon.DefaultBuffer():WriteRegion(position, size, ...).\line\par
+LuaWinCon.WriteRun(position:coord, ...)\par
+\tab Equivalent to LuaWinCon.DefaultBuffer():WriteRun(position, ...).\par
+\par
+--LIBRARY FUNCTIONS END\par
+\par
+Screenbuffer:Close()\par
+\tab Frees the screenbuffer. Behavior is undefined if the active screenbuffer is closed. Behavior is undefined if no screenbuffers remain. Returns nothing.\par
+\par
+Screenbuffer:MakeActive()\par
+\tab Makes this screenbuffer the active buffer, displaying its contents on the window. Returns a boolean indicating success or failure. \par
+\par
+Screenbuffer:GetLargestWindowSize()\par
+\tab Returns a size 'coord' specifying the largest size a window can currently be at that moment. A screenbuffer is not limited to this size, but the window viewing the screenbuffer could be. Note that it is implementation-defined if a screen is actually capable of being larger than this; it is also implementation-defined exactly how this value is determined.\par
+\tab In the basic Win32 implementation, this size represents how large a console can be for a given screen. Moving the console window to a different monitor and calling the function again could return a different value. \par
+\f1\par
+\f0 Screenbuffer:SetCursorVisible(boolean)\par
+\tab Makes the cursor visible or invisible. Returns a boolean indicating success or failure. nil is a valid argument, considered equivalent to false. However, this is not considered equivalent to passing nothing at all; attempting to pass nothing will cause the function to error.\par
+\tab This function will error if passed a non-boolean or non-nil value.\par
+\f1\par
+\f0 Screenbuffer:SetCursorPosition(coord)\par
+\tab Returns a boolean indicating success or failure. Sets the position of the cursor to the given coord. The cursor does not need to be visible for this to take effect.\par
+\tab This function will error if passed a non-coord value or a coord which is not a legal position.\par
+\par
+Screenbuffer:SetCursorSize(number)\par
+\tab Returns a boolean indicating success or failure. The number must be in the range 0.0..+1.0 and represents the percentage of the cell which the cursor takes up. The actual granularity of this value is undefined.\par
+\tab This function will error if passed a non-number, or a number whose value is outside of the given range.\par
+\par
+Screenbuffer:SetScreenBufferSize(coord)\par
+\tab Returns a boolean indicating success or failure. Sets the screenbuffer's output buffer's size to the size indicated by the coord.\par
+\tab This function will error if passed a non-'coord', or an illegal size 'coord'.\par
+\par
+Screenbuffer:SetWindowPositionAndSize(position:coord, size:coord)\par
+\tab Takes a position coord 'position' and a size coord 'size' which indicate, respectively, the coordinates of the cell which will be located at the upperleft-most of the window, and the number of cells in width and height that the window will cover. Returns a boolean indicating success or failure.\par
+\tab This function will error if passed illegal coords or non-coords.\par
+\par
+Screenbuffer:FillRegion(position:coord, size:coord[, character:string][, attribute:attrib])\par
+\tab This function takes a region of a given size and position and fills it with the character\par
+given by 'character', and the attributes given by 'attribute'. Both 'character' and 'attribute' are optional, but if given must be in the same location, i.e., to fill a region with a certain attribute\par
+but not character, call \i Screenbuffer:FillRegion(foopos, foosize, nil, fooattrib)\i0 . If only 'character' is given, then the attributes of the cells in that region are not altered, and if only 'attribute' is given, the characters of the cells in that region are not altered. \par
+\tab As per the implementation-defined nature of the relationship between characters and cells, it is not specified exactly what portion of the string will be used if it exceeds the amount of text which fits in one cell, but it is specified that as much of the string, starting from the beginning, as will fit into a single cell, is used. Thus, an implementation which supports combining diacritics fitting into one cell, must use those, if present.\par
+\tab If an empty string is passed as 'character', then it is treated the same as 'nil'. \par
+\tab Returns a boolean indicating success or failure. If any of the components of 'size' are 0, the function automatically returns true and shall not attempt to take any action with the native console system.\par
+\par
+Screenbuffer:WriteRegion(position:coord, size:coord, ...)\par
+\tab This function takes a region of a given size and position, and writes out a sequence of data specified in the variadic portion of the argument list.\par
+\tab The variadic portion can contain an unlimited number of arguments (within the limitations of the Lua implementation, of course) in any combination of four types, specifying data to be output in the order that the arguments are passed. The data is output at a conceptual "region cursor" location, which advances with the length of any data output. This cursor wraps around the edges of the defined region, through any areas which are actually outside of the bounds of the current Screenbuffer. However, any data which does fall in such an area, is "clipped" and not actually output. This is done on a per-cell basis, so if a middle part of a string falls into a clipped area, then the beginning and end portions of the string will still end up in the same relative positions as if the entire region fell into valid portions of the Screenbuffer.\par
+\tab Once the region cursor reaches the end of the defined region, no more data is output.\par
+\tab Returns a boolean indicating success or failure. If any of the components of 'size' are 0, the function automatically returns true (barring argument type errors, which will be discussed next) and it will not attempt to take any action with the native console system. If for any other reason, no possible data can be output (no variadic arguments, defined region lies entirely outside ScreenBuffer region), the function will return true. \i All\i0  arguments are validated before \i any\i0  data is output, and this will be done even if no data would be output. Whether a component of 'size' is 0, or a sequence of data will never be output due to being clipped or running past the region end, the arguments are still checked for validity and the function will still error if arguments of illegal types are encountered.\par
+\tab The four types of arguments allowed in the variadic portion of the string are as follows:\par
+\par
+\i Nil\i0\par
+A nil argument will set the 'current attrib' to nil. No data is output and the region cursor is not advanced. (Note: 'current attrib' defaults to nil.)\par
+\par
+\i Attrib\i0\par
+An attrib argument will set the 'current attrib' to the specified attrib. No data is output and the region cursor is not advanced.\par
+\par
+\i Number\i0\par
+For this type of argument, only \i actual\i0  Lua Numbers will be allowed, not merely something "convertible to" a Lua Number. The number must be nonnegative, and if it is not an integer then it will go through the usual unspecified Lua truncation to one. The effect of this argument depends on the value of the 'current attrib'. If that current attrib is nil, then the region cursor is simply advanced by the value of the argument. If the current attrib is set, however, then a number of cells equal to the value of the given argument, starting at the region cursor, will have their attribs set with the value of the current attrib, and the region cursor is advanced appropriately.\par
+\par
+\i String\i0\par
+For this type of argument, only \i actual\i0  Lua Strings will be allowed, not merely something "convertible" to a Lua String. The given string data will be output to the cells starting at the region cursor location, and the region cursor is advanced appropriately. If the 'current attrib' is set, then the cells filled with the string data will also have their attribs set to the current attrib.\par
+The length of the string data does not necessarily correspond to the exact advancement of the region cursor. If the console implementation supports combining diacritics, then as many combining diacritics as will fit into one cell, must be combined as such, and will advance the region cursor by only a single cell.\par
+\par
+\tab Because the format of an 'attrib' is unspecified, and an implementation could possibly use special strings or numbers as attribs, it is explicitly specified that an argument's type is checked against being an attrib, before it is checked against being a number or string.\par
+\par
+Screenbuffer:WriteRun(position:coord, ...)\par
+\tab This function takes a position, and writes out a sequence of data specified in the variadic portion of the argument list.\par
+\tab This function works essentially like Screenbuffer:WriteRegion() in all ways except that the position coord simply specifies the location for a \i run\i0  of written data, which wraps at the edges of the screenbuffer itself. It is usually somewhat faster and simpler to execute than Screenbuffer:WriteRegion() and is preferred for single-line data where limits on the length of the data can be guaranteed through some other method.\par
+\tab One important difference is that if the position passed to this function lies outside the bounds of the screenbuffer, the function fails and returns false (:WriteRegion() will return true in this case).\par
+\tab Otherwise, please see the documentation for Screenbuffer:WriteRegion()\par
+\par
+--IMPLEMENTATION-SPECIFIC\par
+\par
+LuaWinCon.LowLevelMode()\par
+\tab Sets the input modes for the current console input buffer to all the lowest-level modes. Returns a boolean indicating success or failure.\par
+\par
+LuaWinCon.MakeCoord(coord | number, number)\par
+\tab Takes either a value which qualifies as a coord in its own right, or two values convertible to integers, and returns the same kind of 'coord', with the same kind of metatable, as the coords returned by library functions or object methods.\par
+\par
+LuaWinCon.SetDefaultColorTable(colorarray)\par
+\tab This function sets the "default" color table. Whenever a new screenbuffer is made, its colortable will be set to this value. Whenever the library is loaded or LuaWinCon.NewConsole() is called, the default color table will be loaded with the value of the color table of the default screenbuffer created for that console.\par
+\tab Returns a boolean indicating success or failure, or a nil if the function isn't available on this system (most commonly, when running on Windows XP, as the color-setting functions are only available on Windows Vista or above.)\par
+\tab This function will error if it is not passed a well-formed colorarray (see Screenbuffer:SetColorTable() for details on this datatype.)\par
+\par
+Screenbuffer:SetColorTable(colorarray)\par
+\tab This function sets the buffer's color table as given in the argument. The argument is of type "colorarray", used only in this function. A "colorarray" is any value which, when indexed with the numeric values 1 through 16 (metamethods are respected), produces well-formed "color" values. "color" is a type also used only here. A "color" is a value which, when indexed with the string values 'r', 'g', and 'b' (metamethods are respected), produces real numeric values in the range 0.0..1.0.\par
+\tab A screenbuffer's color array is persistent across the lifetime of the buffer.\par
+\tab Returns a boolean indicating success or failure, or a nil if the function isn't available on this system. The color table is only settable on Windows Vista and above, so when running on Windows XP, this function will always return nil. \par
+\tab This function will error if the colorarray is not well-formed.\par
+\par
+\b Coord Metamethods\b0\par
+\tab This implementation defines some metamethods for coords returned by library functions or LuaWinCon.MakeCoord().\par
+\tab\b __add\b0  - When performing "coord1 + coord2", a new coord is returned whose elements are produced by adding the corresponding elements of the original two. Thus, x3 = x1 + x2 and y3 = y1 + y2.\par
+\tab\b __mul\b0  - When performing "coord * number", a new coord is returned whose elements are produced by multipling each element by "number". Thus, x2 = x1 * number and y2 = y1 * number. \i This functionality may be a bit too non-obvious to those used to working with noninteger vectors and vector multiplication, and the functionality isn't terribly useful anyway, so it may be removed in the future if testers recommend it.\i0\par
+\tab\b __index\b0  - Internally, the x and y elements of each coord are stored in numeric-index 1 and numeric-index 2, but attempting to index a coord with string indices "x" or "w", and "y" or "h", whether for reading or assignment, will redirect to numeric-index 1 and numeric-index 2, respectively. This allows for clearer and more readable code.\par
+\tab\b __tostring\b0  - This metamethod returns a string in the form of "(\i <x coordinate>\i0 , \i <y coordinate>\i0 )", and is particularly useful for diagnostics.\par
+\par
+--IMPLEMENTATION-SPECIFIC END\f1\par
+}
+ 

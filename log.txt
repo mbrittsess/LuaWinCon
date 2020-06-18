@@ -1,0 +1,2 @@
+Initial Default Attribute: {16, 01}
+New Default Attribyte:     {08, 01}
